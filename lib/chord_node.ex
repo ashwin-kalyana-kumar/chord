@@ -5,8 +5,25 @@ defmodule ChordNode do
 
   """
 
-  def start_link(id) do
-    state = %NodeStruct{id: id, keys: []}
+  def get_empty_values(id, mul, n) when id + mul > n do
+    []
+  end
+
+  def get_empty_values(id, mul, n) do
+    [{id + mul, nil} | get_empty_values(id, mul * 2, n)]
+  end
+
+  def start_link(id, max) do
+    finger = get_empty_values(id, 1, max)
+
+    fingers =
+      if(finger == []) do
+        [{1, nil}]
+      else
+        finger
+      end
+
+    state = %NodeStruct{id: id, keys: [], finger_table: fingers}
     GenServer.start_link(__MODULE__, state)
   end
 
@@ -19,23 +36,23 @@ defmodule ChordNode do
   end
 
   def get_node(id) do
-    pid = NodeSuper.get_an_active_child_id()
+    {node_id, pid} = NodeSuper.get_an_active_child_id()
 
     new_pid =
       if(pid == id) do
         get_node(id)
       else
-        pid
+        {node_id, pid}
       end
 
     new_pid
   end
 
-  def join(new_pid) do
-    id = GenServer.call(new_pid, :get_id)
+  def join(id, new_pid) do
+    #  id = GenServer.call(new_pid, :get_id)
     # IO.puts("new node joined")
     # IO.inspect(new_pid)
-    node = get_node(new_pid)
+    {node_id, node} = get_node(new_pid)
     # IO.puts("asking:")
     # IO.inspect(node)
 
@@ -44,7 +61,7 @@ defmodule ChordNode do
     # IO.puts("got!!")
     # IO.inspect(suc_pid)
     # REALLYYYYYY????
-    GenServer.call(new_pid, {:new_successor, suc_pid})
+    GenServer.call(new_pid, {:new_successor, suc_pid, node_id})
     # IO.puts("created successfully!!")
     # REALLYY REQUIREDDDD?
     #    GenServer.cast(new_pid, :stablize)
@@ -60,18 +77,64 @@ defmodule ChordNode do
     # GenServer.cast(new_pid, :stablize)
   end
 
-  defp find_succ(_id, list, prev_pid) when list == [] do
+  def start_sending(pid, num, max) do
+    GenServer.cast(pid, {:send_messages, num, max})
+  end
+
+  defp find_succ_after(_id, list, prev_pid) when list == [] do
     prev_pid
   end
 
-  defp find_succ(id, list, _prev_pid) do
+  defp find_succ_after(id, list, prev_pid) do
     [{head_id, head_pid} | tail] = list
 
     if(head_id > id) do
+      if(head_pid != nil) do
+        head_pid
+      else
+        prev_pid
+      end
+    else
+      find_succ_after(id, tail, head_pid)
+    end
+  end
+
+  defp find_succ_before(_id, list, prev_pid) when list == [] do
+    prev_pid
+  end
+
+  defp find_succ_before(id, list, _prev_pid) do
+    [{head_id, head_pid} | tail] = list
+
+    if(head_id < id) do
       head_pid
     else
-      find_succ(id, tail, head_pid)
+      find_succ_before(id, tail, head_pid)
     end
+  end
+
+  defp fix_fingers(list, _prev_pid, _key_list) when list == [] do
+    []
+  end
+
+  defp fix_fingers(list, prev_pid, key_list) do
+    [{head_id, head_pid} | tail] = list
+
+    pid =
+      if(head_pid == nil) do
+        prev_pid
+      else
+        head_pid
+      end
+
+    succ =
+      if(Enum.member?(key_list, head_id)) do
+        nil
+      else
+        GenServer.call(prev_pid, {:get_successor, head_id})
+      end
+
+    [{head_id, succ} | fix_fingers(tail, pid, key_list)]
   end
 
   def handle_cast({:yo_im_ur_new_predecessor, pid, id}, state) do
@@ -80,22 +143,44 @@ defmodule ChordNode do
     new_state =
       unless state.predecessor == nil do
         # REALLLYY? TRY storing the predecessor and successor ID in your state
-        pred_id = GenServer.call(state.predecessor, :get_id)
+        # pred_id = GenServer.call(state.predecessor, :get_id)
+        pred_id = state.pred_id
 
-        new_pred =
+        {new_pred, new_pred_id} =
           cond do
-            pred_id < id and pred_id < state.id -> pid
-            pred_id > id and pred_id > state.id -> pid
-            pred_id == state.id -> pid
-            true -> state.predecessor
+            pred_id < id and pred_id < state.id -> {pid, id}
+            pred_id > id and pred_id > state.id -> {pid, id}
+            pred_id == state.id -> {pid, id}
+            true -> {state.predecessor, state.pred_id}
           end
 
-        state |> Map.update!(:predecessor, fn _ -> new_pred end)
+        state
+        |> Map.update!(:predecessor, fn _ -> new_pred end)
+        |> Map.update!(:pred_id, fn _ -> new_pred_id end)
       else
-        state |> Map.update!(:predecessor, fn _ -> pid end)
+        state
+        |> Map.update!(:predecessor, fn _ -> pid end)
+        |> Map.update!(:pred_id, fn _ -> id end)
       end
 
     {:noreply, new_state}
+  end
+
+  def handle_cast(:fix_fingers, state) do
+    list = state.finger_table
+
+    [{head_id, head_pid} | tail] = list
+
+    pid =
+      if(head_pid == nil) do
+        state.successor
+      else
+        head_pid
+      end
+
+    list = [{head_id, pid} | fix_fingers(tail, pid, state.keys)]
+    state = state |> Map.update!(:finger_table, fn _ -> list end)
+    {:noreply, state}
   end
 
   def handle_cast(:stablize, state) do
@@ -103,31 +188,34 @@ defmodule ChordNode do
     # IO.inspect(self())
     suc_pid = state.successor
 
-    pid =
+    {pid, id} =
       unless suc_pid == self() do
         # RISKYYYYYYY!! But I guess, a call here makes sense
         GenServer.call(suc_pid, :yo_give_me_your_predecessor)
       else
-        state.predecessor
+        {state.predecessor, state.pred_id}
       end
 
-    suc_pid =
+    {succ_pid, new_id} =
       cond do
         pid == nil and suc_pid != self() ->
           GenServer.cast(suc_pid, {:yo_im_ur_new_predecessor, self(), state.id})
-          suc_pid
+          {suc_pid, state.succ_id}
 
         pid != self() ->
           GenServer.cast(pid, {:yo_im_ur_new_predecessor, self(), state.id})
-          pid
+          {pid, id}
 
         true ->
-          suc_pid
+          {suc_pid, state.succ_id}
       end
 
     # IO.puts("My new succ piD for #{state.id}")
     # IO.inspect(suc_pid)
-    state = state |> Map.update!(:successor, fn _ -> suc_pid end)
+    state =
+      state
+      |> Map.update!(:successor, fn _ -> succ_pid end)
+      |> Map.update!(:succ_id, fn _ -> new_id end)
 
     # IO.puts("done stablizing #{state.id}")
     {:noreply, state}
@@ -177,10 +265,13 @@ defmodule ChordNode do
     {:noreply, state}
   end
 
-  def handle_cast({:new_predecessor, pred_pid}, state) do
+  def handle_cast({:new_predecessor, pred_pid, pred_id}, state) do
     pred = state.predecessor
 
-    state = state |> Map.update!(:predecessor, fn _ -> pred_pid end)
+    state =
+      state
+      |> Map.update!(:predecessor, fn _ -> pred_pid end)
+      |> Map.update!(:pred_id, fn _ -> pred_id end)
 
     # IO.puts("Stablizing on")
     ## IO.inspect(pred)
@@ -194,13 +285,76 @@ defmodule ChordNode do
     {:noreply, state}
   end
 
-  def handle_call({:new_predecessor, pred_pid}, _from, state) do
+  ###################################################################################
+
+  def handle_cast({:forward_message, from, num, req_key, hop_count, forw_pid}, state) do
+    new_state =
+      if(Enum.member?(state.keys, req_key)) do
+        # TODO: send the message back to the forwpid!!
+        GenServer.cast(forw_pid, {:forward_reply, from, num, hop_count + 1})
+        state
+      else
+        succ_pid = state.successor
+        forward_table = state.forward_table
+
+        table =
+          if(forward_table == nil) do
+            %{}
+          else
+            forward_table
+          end
+
+        table = table |> Map.put_new_lazy({from, num}, fn -> forw_pid end)
+        GenServer.cast(succ_pid, {:forward_message, from, num, req_key, hop_count + 1, self()})
+        state |> Map.update!(:forward_table, fn _ -> table end)
+      end
+
+    {:noreply, new_state}
+  end
+
+  def handle_cast({:forward_reply, from, num, hop_count}, state) do
+    new_state =
+      if(state.id == from) do
+        IO.puts(
+          "#{state.id} messages remaining #{state.number_of_messages - 1}, Hop_count: #{
+            hop_count - 1
+          }"
+        )
+
+        state |> Map.update!(:number_of_messages, fn x -> x - 1 end)
+      else
+        table = state.forward_table
+        {pid, table} = table |> Map.pop({from, num})
+
+        unless pid == nil do
+          GenServer.cast(pid, {:forward_reply, from, num, hop_count + 1})
+        end
+
+        state |> Map.update!(:forward_table, fn _ -> table end)
+      end
+
+    {:noreply, new_state}
+  end
+
+  def handle_cast({:send_messages, num_messages, max_count}, state) do
+    state = state |> Map.update!(:number_of_messages, fn _ -> num_messages end)
+
+    for i <- 1..num_messages do
+      random_message = :rand.uniform(max_count)
+      GenServer.cast(self(), {:forward_message, state.id, i, random_message, 0, self()})
+    end
+
+    {:noreply, state}
+  end
+
+  #####################################################################################
+  def handle_call({:new_predecessor_old, pred_pid}, _from, state) do
     pred = state.predecessor
 
-    #    if pred == nil do
-    #  #IO.puts("OMGOMGGMOGMOGMMGOGMOMGOGMGOMGMOGMGOGMOGMOGMOGMGO")
-    #      #IO.inspect(self())
-    #    end
+    if pred == nil do
+      # IO.puts("OMGOMGGMOGMOGMMGOGMOMGOGMGOMGMOGMGOGMOGMOGMOGMGO")
+      #      #IO.inspect(self())
+    end
 
     state = state |> Map.update!(:predecessor, fn _ -> pred_pid end)
 
@@ -222,9 +376,13 @@ defmodule ChordNode do
     {:reply, :ok, state}
   end
 
-  def handle_call({:new_successor, suc_pid}, _from, state) do
-    state = state |> Map.update!(:successor, fn _ -> suc_pid end)
-    GenServer.cast(suc_pid, {:new_predecessor, self()})
+  def handle_call({:new_successor, suc_pid, suc_id}, _from, state) do
+    state =
+      state
+      |> Map.update!(:successor, fn _ -> suc_pid end)
+      |> Map.update!(:succ_id, fn _ -> suc_id end)
+
+    GenServer.cast(suc_pid, {:new_predecessor, self(), state.id})
     # IO.puts("notified successor")
     # RISKY, but makes sense here too!
     keys = GenServer.call(suc_pid, {:give_me_keys, state.id})
@@ -258,7 +416,7 @@ defmodule ChordNode do
   end
 
   def handle_call(:yo_give_me_your_predecessor, _from, state) do
-    {:reply, state.predecessor, state}
+    {:reply, {state.predecessor, state.pred_id}, state}
   end
 
   def handle_call({:give_me_keys, id}, _from, state) do
@@ -297,7 +455,7 @@ defmodule ChordNode do
     end
   end
 
-  def handle_call(:get_id, _from, state) do
+  def handle_call(:get_id_old, _from, state) do
     {:reply, state.id, state}
   end
 
@@ -307,6 +465,8 @@ defmodule ChordNode do
       |> Map.update!(:successor, fn _x -> suc_pid end)
       |> Map.update!(:predecessor, fn _x -> pred_pid end)
       |> Map.update!(:keys, fn _x -> keys end)
+      |> Map.update!(:pred_id, fn _x -> state.id end)
+      |> Map.update!(:succ_id, fn _x -> state.id end)
 
     {:reply, :ok, state}
   end

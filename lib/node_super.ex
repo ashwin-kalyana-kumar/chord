@@ -7,17 +7,17 @@ defmodule NodeSuper do
   #    DynamicSupervisor.init(strategy)
   #  end
 
-  def start_child(id) do
-    spec = %{id: id, start: {ChordNode, :start_link, [id]}}
-    IO.inspect(spec)
+  def start_child(id, n) do
+    spec = %{id: id, start: {ChordNode, :start_link, [id, n]}}
+    #  IO.inspect(spec)
     {:ok, child} = DynamicSupervisor.start_child(:i_am_super, spec)
     child
   end
 
   def get_an_active_child_id() do
     list = DynamicSupervisor.which_children(:i_am_super)
-    {_, pid, _, _} = list |> Enum.random()
-    pid
+    {id, pid, _, _} = list |> Enum.random()
+    {id, pid}
   end
 
   def stablize_all_children() do
@@ -35,12 +35,35 @@ defmodule NodeSuper do
 
   def check_all_children() do
     list = DynamicSupervisor.which_children(:i_am_super)
-    IO.puts("OHHHHHHHHH YEAHHHHHHHHHHHHH")
+    #  IO.puts("OHHHHHHHHH YEAHHHHHHHHHHHHH")
 
     list
     |> Enum.each(fn item ->
       {_, pid, _, _} = item
       :ok = ChordNode.print_keys(pid)
+    end)
+  end
+
+  def send_messages(n, max) do
+    list = DynamicSupervisor.which_children(:i_am_super)
+
+    list
+    |> Enum.each(fn item ->
+      {_, pid, _, _} = item
+      ChordNode.start_sending(pid, n, max)
+    end)
+  end
+
+  def fix_all_fingers() do
+    list = DynamicSupervisor.which_children(:i_am_super)
+
+    list
+    |> Enum.each(fn item ->
+      {id, pid, _, _} = item
+      #    IO.puts("Fixing fingers for #{id}")
+      #    IO.inspect(id)
+      GenServer.cast(pid, :fix_fingers)
+      #    IO.puts("Fixed fingers for #{id}")
     end)
   end
 end
