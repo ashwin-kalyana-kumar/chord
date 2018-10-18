@@ -88,28 +88,24 @@ defmodule ChordNode do
   defp find_succ_after(id, list, prev_pid) do
     [{head_id, head_pid} | tail] = list
 
-    if(head_id > id) do
-      if(head_pid != nil) do
-        head_pid
-      else
-        prev_pid
-      end
-    else
-      find_succ_after(id, tail, head_pid)
+    cond do
+      head_id == id -> head_pid
+      head_id > id -> prev_pid
+      true -> find_succ_after(id, tail, head_pid)
     end
   end
 
-  defp find_succ_before(_id, list, prev_pid) when list == [] do
+  def find_succ_before(_id, list, prev_pid) when list == [] do
     prev_pid
   end
 
-  defp find_succ_before(id, list, _prev_pid) do
+  def find_succ_before(id, list, prev_pid) do
     [{head_id, head_pid} | tail] = list
 
-    if(head_id < id) do
-      head_pid
-    else
-      find_succ_before(id, tail, head_pid)
+    cond do
+      head_id == id -> head_pid
+      head_id < id -> prev_pid
+      true -> find_succ_before(id, tail, head_pid)
     end
   end
 
@@ -291,10 +287,17 @@ defmodule ChordNode do
     new_state =
       if(Enum.member?(state.keys, req_key)) do
         # TODO: send the message back to the forwpid!!
-        GenServer.cast(forw_pid, {:forward_reply, from, num, hop_count + 1})
+        GenServer.cast(forw_pid, {:forward_reply, from, num, req_key, hop_count + 1})
         state
       else
-        succ_pid = state.successor
+        # succ_pid = state.successor
+        succ_pid =
+          if(state.id < req_key) do
+            find_succ_after(req_key, state.finger_table, state.successor)
+          else
+            find_succ_before(req_key, state.finger_table, state.successor)
+          end
+
         forward_table = state.forward_table
 
         table =
@@ -305,19 +308,25 @@ defmodule ChordNode do
           end
 
         table = table |> Map.put_new_lazy({from, num}, fn -> forw_pid end)
-        GenServer.cast(succ_pid, {:forward_message, from, num, req_key, hop_count + 1, self()})
+
+        if(hop_count < 50) do
+          GenServer.cast(succ_pid, {:forward_message, from, num, req_key, hop_count + 1, self()})
+        else
+          IO.puts("message from #{from}, number #{num} requesting for #{req_key}, failed")
+        end
+
         state |> Map.update!(:forward_table, fn _ -> table end)
       end
 
     {:noreply, new_state}
   end
 
-  def handle_cast({:forward_reply, from, num, hop_count}, state) do
+  def handle_cast({:forward_reply, from, num, key, hop_count}, state) do
     new_state =
       if(state.id == from) do
         IO.puts(
-          "#{state.id} messages remaining #{state.number_of_messages - 1}, Hop_count: #{
-            hop_count - 1
+          "#{state.id} messages remaining #{state.number_of_messages - 1}, Hop count for #{key} is #{
+            hop_count
           }"
         )
 
@@ -327,7 +336,7 @@ defmodule ChordNode do
         {pid, table} = table |> Map.pop({from, num})
 
         unless pid == nil do
-          GenServer.cast(pid, {:forward_reply, from, num, hop_count + 1})
+          GenServer.cast(pid, {:forward_reply, from, num, key, hop_count + 1})
         end
 
         state |> Map.update!(:forward_table, fn _ -> table end)
@@ -474,10 +483,7 @@ defmodule ChordNode do
   def handle_call(:print_keys, _from, state) do
     id = state.id
     IO.puts("Printing #{id}")
-    IO.inspect(self())
-    IO.inspect(state.successor)
-    IO.inspect(state.predecessor)
-    IO.inspect(state.keys)
+    IO.inspect(state.finger_table)
     {:reply, :ok, state}
   end
 end

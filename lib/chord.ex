@@ -31,7 +31,8 @@ defmodule Chord do
     # Node.spawn_link(Node.self(), NodeSuper.stablize_all_children())
     start_nodes(tail, n)
     NodeSuper.fix_all_fingers()
+    :timer.sleep(1000)
+    NodeSuper.check_all_children()
     NodeSuper.send_messages(mess, n)
-    #  NodeSuper.check_all_children()
   end
 end
