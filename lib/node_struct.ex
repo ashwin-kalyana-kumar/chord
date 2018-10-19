@@ -11,6 +11,7 @@ defmodule NodeStruct do
     :pred_id,
     :succ_id,
     :forward_table,
-    :number_of_messages
+    :number_of_messages,
+    :parent_pid
   ]
 end

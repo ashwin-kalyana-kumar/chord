@@ -3,21 +3,29 @@ defmodule Chord do
   Documentation for Chord.
   """
 
-  def start_nodes(list, _n) when list == [] do
+  def receive_messages(total, count) do
+    receive do
+      {:hop_count, hop_count} -> receive_messages(total + 1, count + hop_count)
+    after
+      10_000 -> IO.puts("Average number of hops: #{count / total}")
+    end
+  end
+
+  def start_nodes(list, _n, _count) when list == [] do
     :ok
   end
 
-  def start_nodes(list, n) do
+  def start_nodes(list, n, count) do
     [head | tail] = list
-    child = NodeSuper.start_child(head, n)
+    child = NodeSuper.start_child(head, n, self())
     ChordNode.join(head, child)
-    # :timer.sleep(1)
+    :timer.sleep(5)
     # NodeSuper.stablize_all_children()
     # IO.gets("")
     #  NodeSuper.check_all_children()
     # IO.gets("")
-
-    start_nodes(tail, n)
+    #    IO.puts(count)
+    start_nodes(tail, n, count - 1)
   end
 
   def main(n, mess) do
@@ -26,13 +34,16 @@ defmodule Chord do
     IO.puts("adding nodes in the order")
     IO.inspect(list)
     [head | tail] = list
-    child = NodeSuper.start_child(head, n)
+    child = NodeSuper.start_child(head, n, self())
     ChordNode.create(child, n)
     # Node.spawn_link(Node.self(), NodeSuper.stablize_all_children())
-    start_nodes(tail, n)
+    start_nodes(tail, n, n)
+    IO.puts("started!!")
     NodeSuper.fix_all_fingers()
-    :timer.sleep(1000)
-    NodeSuper.check_all_children()
+    IO.puts("fixed!!")
+    :timer.sleep(2000)
+    #  NodeSuper.check_all_children()
     NodeSuper.send_messages(mess, n)
+    receive_messages(0, 0)
   end
 end

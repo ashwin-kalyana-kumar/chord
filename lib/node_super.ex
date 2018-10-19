@@ -7,8 +7,8 @@ defmodule NodeSuper do
   #    DynamicSupervisor.init(strategy)
   #  end
 
-  def start_child(id, n) do
-    spec = %{id: id, start: {ChordNode, :start_link, [id, n]}}
+  def start_child(id, n, parent) do
+    spec = %{id: id, start: {ChordNode, :start_link, [id, n, parent]}}
     #  IO.inspect(spec)
     {:ok, child} = DynamicSupervisor.start_child(:i_am_super, spec)
     child
@@ -16,8 +16,9 @@ defmodule NodeSuper do
 
   def get_an_active_child_id() do
     list = DynamicSupervisor.which_children(:i_am_super)
-    {id, pid, _, _} = list |> Enum.random()
-    {id, pid}
+    {_, pid, _, _} = list |> Enum.random()
+    # IO.inspect({id, pid})
+    pid
   end
 
   def stablize_all_children() do
@@ -63,6 +64,7 @@ defmodule NodeSuper do
       #    IO.puts("Fixing fingers for #{id}")
       #    IO.inspect(id)
       GenServer.cast(pid, :fix_fingers)
+      :timer.sleep(10)
       #    IO.puts("Fixed fingers for #{id}")
     end)
   end
