@@ -1,6 +1,8 @@
 # Chord
 
-**TODO: Add description**
+An elixir implementation of the chord protocol described in the following paper.
+https://www.cs.cornell.edu/johannes/papers/2003/focs2003-gossip.pdf
+
 
 ## Installation
 
